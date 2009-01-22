@@ -5,7 +5,7 @@
 
 # change 'tests => 1' to 'tests => last_test_to_print';
 
-use Test::More tests => 6;
+use Test::More tests => 7;
 BEGIN { use_ok('Music::ABC::Archive') };
 
 use File::Compare ;
@@ -77,8 +77,20 @@ close(F) ;
 
 ok(compare("a4.txt", "a4_tst.txt") == 0, "list_by_title") ;
 
-unlink glob('a*.txt') ;
-unlink "test.abc" ;
+@lines = $abc_obj->get_archive_header_lines() ;
+
+open(F, ">a5_tst.txt") ;
+
+foreach (@lines) {
+    print F "$_\n" ;
+}
+
+close(F) ;
+
+ok(compare("a5.txt", "a5_tst.txt") == 0, "get archive header") ;
+
+#unlink glob('a*.txt') ;
+#unlink "test.abc" ;
 
 sub makedatafiles
 {
@@ -103,6 +115,7 @@ TRANSCRIPTION
         Song #16 in 'JohnWalsh/sessionTunes.abc'
 EOF
 close(F);
+
 open(F, ">a2.txt");
 print F <<EOF;
 <h3><center>Song Number 1 in test.abc</h3>
@@ -135,6 +148,7 @@ TRANSCRIPTION
 </dl>
 EOF
 close(F);
+
 open(F, ">a3.txt");
 print F <<EOF;
 X:1
@@ -153,6 +167,8 @@ g|fdf fga|ecA ABc|dcd Bed|cAA A2c|
 BGB Bcd|AFD DFA|dcd efg|fdc d2:|
 
 EOF
+close(F);
+
 open(F, ">a4.txt");
 print F <<EOF;
 Top of the Cork Road, The : Father O'Flynn : 1 : jig : 6/8 : Key of D
@@ -160,7 +176,15 @@ Father O'Flynn : Father O'Flynn : 1 : jig : 6/8 : Key of D
 Father Tom's Wager : Father Tom's Wager : 2 : jig : 6/8 : Key of G
 EOF
 close(F);
+
+open(F, ">a5.txt") or die ;
+print F "% header line 1\n" ;
+print F "% header line 2\n" ;
+close(F);
+
 open(F, ">test.abc");
+print F "% header line 1\n" ;
+print F "% header line 2\n" ;
 print F <<EOF;
 X:1
 T:Top of the Cork Road, The

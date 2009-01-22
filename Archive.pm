@@ -9,18 +9,16 @@ require Exporter;
 
 our @ISA = qw(Exporter);
 
-our %EXPORT_TAGS = ( 'all' => [ qw(new parse openabc filename list_by_title get_song print_song_summary) ] );
+our %EXPORT_TAGS = ( 'all' => [ qw(new parse openabc filename list_by_title get_song print_song_summary get_song_titles) ] );
 
 our @EXPORT_OK = qw(new parse openabc filename list_by_title get_song print_song_summary) ;
 our @EXPORT = ( );
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 use Music::ABC::Song ;
 
-my ($fh, %Song_objs, %Song_data, %Unique_display_name) ;
-my $Is_parsed = 0 ;
-my $File_is_open = 0 ;
+my (@header_lines, %Song_objs, %Song_data, %Unique_display_name) ;
 
 sub new
 {
@@ -34,17 +32,20 @@ sub new
     }
 
     bless ($self, $class) ;
+    $self->{Is_parsed} = 0 ;
+    $self->{File_is_open} = 0 ;
     return $self ;
 }
 
 sub abc_reset
 {
-    $Is_parsed = 0 ;
+    my $self = shift ;
+    $self->{Is_parsed} = 0 ;
     %Song_data = () ;
     %Song_objs = () ;
     %Unique_display_name = () ;
-    close($fh) if $File_is_open ;
-    $File_is_open = 0 ;
+    #close($self->{fh}) if $self->{File_is_open} ;
+    #$self->{File_is_open} = 0 ;
 }
 
 sub filename
@@ -55,8 +56,7 @@ sub filename
     if($newfilename) {
 	if($newfilename ne $self->{FILENAME}) {
 	    $self->{FILENAME} = $newfilename ;
-	    $Is_parsed = 0 ;
-	    abc_reset() ;
+	    $self->abc_reset() ;
 	}
     }
 
@@ -67,26 +67,31 @@ sub openabc
 {
     my $self = shift ;
     my $filename = shift ;
+    my $fh ;
 
     if(defined($filename)) {
 	$self->{FILENAME} = $filename ;
     }
 
+    close($self->{fh}) if $self->{File_is_open} ;
+    $self->{File_is_open} = 0 ;
 
-    close($fh) if $File_is_open ;
-    $File_is_open = 0 ;
     open($fh, "<$self->{FILENAME}") || return 0 ;
-    $File_is_open = 1 ;
+    $self->{fh} = $fh ;
+    $self->{File_is_open} = 1 ;
+
+    return 1 ;
 }
 
 sub parse
 {
-    return if $Is_parsed ;
-
     my $self = shift ;
+    return if $self->{Is_parsed} ;
+
+    $self->openabc() if !$self->{File_is_open} ;
 
     my $display_name ;
-    my $currpos = tell($fh) ;
+    my $currpos = tell(${$self->{fh}}) ;
     my $songnumber ;
     my $type = "" ;
     my $key = "" ;
@@ -95,8 +100,11 @@ sub parse
     my $songnum ;
     my $fname = $self->{FILENAME} ;
     my $in_song = 0 ;
+    my $in_songs = 0 ;
     my $found_meter = 0 ;
     my $found_type = 0 ;
+    my $fh = $self->{fh} ;
+
 
     while (<$fh>) {
 	#print ;
@@ -109,12 +117,16 @@ sub parse
 	## 4 header types we need to explicity detect X,T,M and R
 	if (/^X\:/) {
 	    my @t = split(':') ;
+	    $t[1] = "" if(!defined($t[1])) ;
+	    $t[1] =~ s/^\s+//; # trim leading whitespace
+	    $t[1] =~ s/\s+$//; # trim trailing whitespace
 	    $songnum = $t[1] + 0 ;
 	    $Song_objs{$songnum} = Music::ABC::Song->new(archivename=>$fname, number=>$songnum) ;
 	    $Song_objs{$songnum}->filepos($currpos) ;
 	    $in_song = 0 ;
 	} elsif (/^T\:/) {
 	    my @t = split(':') ;
+	    $t[1] = "" if(!defined($t[1])) ;
 	    $t[1] =~ s/^\s+//; # trim leading whitespace
 	    $t[1] =~ s/\s+$//; # trim trailing whitespace
 	    my $append = "" ;
@@ -140,17 +152,26 @@ sub parse
 
 	} elsif (/^R\:/) {
 	    my @t = split(':') ;
+	    $t[1] = "" if(!defined($t[1])) ;
 	    $type = $t[1] ;
 	} elsif (/^M\:/) {
 	    my @t = split(':') ;
+	    $t[1] = "" if(!defined($t[1])) ;
 	    $meter = $t[1] ;
 	} 
+
+
+	if(/^%/) {
+	    # this line silently passes through, but
+	    # isn't necessarily the start of the song
+	    if(!$in_songs) {
+		push @header_lines, $_ ;
+
+	    }
+	}
 	
 	if($songnum) {
-	    if(/^%/) {
-		# this line silently passes through, but
-		# isn't necessarily the start of the song
-	    } elsif (/^(.):/) {
+	    if (/^(.):/) {
 		my ($code, @v) = split(':') ;
 		my $text = join ":", @v ;
 		if($in_song || !($1 =~/[MR]/)) {
@@ -167,15 +188,16 @@ sub parse
 		    $Song_objs{$songnum}->meter($meter) ;
 		}
 		$in_song = 1 ;
+		$in_songs = 1 ;
 	    }
 
 	    $Song_objs{$songnum}->text($_) ;
 	}
 
-	$currpos = tell($fh) ;
+	$currpos = tell($self->{fh}) ;
     }
 
-    $Is_parsed = 1 ;
+    $self->{Is_parsed} = 1 ;
 }
 
 sub get_song
@@ -186,10 +208,11 @@ sub get_song
     my @data ;
 
     eval {
-	$self->parse() if(!$Is_parsed) ;
+	$self->parse() if(!$self->{Is_parsed}) ;
 
 	foreach(@{$Song_objs{$songnum}->text()}) {
-	    next if /^.:/ && $no_headers ;
+	    next if /^[A-Z]:/ && $no_headers ;
+	    next if /^[a-z]:/ && $no_headers ;
 	    push (@data, $_) ;
 	}
     } ;
@@ -199,6 +222,20 @@ sub get_song
     return @data ;
 }
 
+sub get_archive_header_lines
+{
+    my $self = shift ;
+    eval {
+	$self->parse() if(!$self->{Is_parsed}) ;
+    } ;
+
+    croak "get_archive_header_lines failed" if ($@) ;
+
+    #print "Returning Header Lines:\n@header_lines\n" ;
+
+    return @header_lines ;
+}
+
 sub print_song_summary
 {
     my $self = shift ;
@@ -206,7 +243,7 @@ sub print_song_summary
     my $use_html_tags = shift || 0 ;
     my @data ;
 
-    $self->parse() if(!$Is_parsed) ;
+    $self->parse() if(!$self->{Is_parsed}) ;
 
     my $sr = $Song_objs{$songnum} ;
 
@@ -227,7 +264,7 @@ sub list_by_title
     my $self = shift ;
     my @data ;
 
-    $self->parse() if(!$Is_parsed) ;
+    $self->parse() if(!$self->{Is_parsed}) ;
 
     foreach my $songnum (sort by_name keys %Song_objs) {
 	push (@data, [$Song_objs{$songnum}->display_name(),
@@ -242,9 +279,20 @@ sub list_by_title
     return @data ;
 }
 
+sub get_song_titles
+{
+    my $self = shift ;
+    my $songnum = shift || return undef ;
+
+    $self->parse() if(!$self->{Is_parsed}) ;
+
+    return @{$Song_objs{$songnum}->titles()} ;
+}
+
 sub DESTROY
 {
-    close($fh) if $File_is_open ;
+    my $self = shift ;
+    close($self->{fh}) if $self->{File_is_open} ;
 }
 
 1;
@@ -355,6 +403,13 @@ on a WWW browser.  There is no trailing "\n" ;
 
 @lines = print_song_summary($song_number) ;
 @lines = print_song_summary($song_number, $use_html_tags) ;
+
+
+=item get_archive_header_lines()
+
+Returns all of the ABC header text(any line starting with %, before any songs are found)
+
+@header_lines = get_archive_header_lines() ;
 
 =item parse()
 
